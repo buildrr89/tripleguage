@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "restolad",
   "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/buildrr89/tripleguage"
@@ -61,7 +62,33 @@
         "command": "buildCockpit.createSampleTasks",
         "title": "Build Cockpit: Create Sample tasks.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Build Cockpit",
+      "properties": {
+        "buildCockpit.burnThreshold": {
+          "type": "number",
+          "default": 50,
+          "description": "Monthly burn ($) above which the Burn status light turns amber."
+        },
+        "buildCockpit.burnMax": {
+          "type": "number",
+          "default": 200,
+          "description": "Maximum burn value for the Burn gauge scale (100% = this value)."
+        },
+        "buildCockpit.depsFileName": {
+          "type": "string",
+          "default": "deps.yaml",
+          "description": "Name of the dependencies config file in the workspace root."
+        },
+        "buildCockpit.tasksFileNames": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["tasks.json", "tasks.yaml"],
+          "description": "Task file names to search for (in priority order). Supports both JSON and YAML."
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

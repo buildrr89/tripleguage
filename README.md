@@ -6,12 +6,17 @@ A VS Code extension that adds a **sports car gauge-cluster dashboard** to your s
 
 ## Features
 
-- **Progress gauge** — weighted task completion percentage
+- **Progress gauge** — weighted task completion with SVG needle, tick marks, and animated arcs
 - **Burn gauge** — active paid dependency count and monthly cost
 - **Blocked gauge** — tasks blocked by paused dependencies
 - **Status lights** — quick health indicators for tasks, deps, health, and burn
+- **Task editing** — click any task's status circle to cycle it through todo → doing → done
 - **Dependency management** — toggle individual deps active/paused, or bulk pause all safe-to-pause deps
-- **Auto-refresh** — file watchers detect changes to `deps.yaml` and `tasks.json` instantly
+- **Activity Bar badge** — blocked task count shown on the extension icon
+- **Theme-aware** — uses VS Code CSS variables so it looks correct in any color theme
+- **Dual format** — supports both `tasks.json` and `tasks.yaml`
+- **Configurable** — burn threshold, max scale, and file names via VS Code settings
+- **Auto-refresh** — file watchers detect changes instantly
 - **Onboarding** — if config files are missing, one-click sample file creation
 
 ## Getting Started
@@ -50,7 +55,7 @@ deps:
     required_for_tasks: ["payments"]
 ```
 
-### `tasks.json`
+### `tasks.json` (or `tasks.yaml`)
 
 ```json
 {
@@ -65,6 +70,17 @@ deps:
   ]
 }
 ```
+
+## Settings
+
+Open VS Code settings and search for "Build Cockpit":
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `buildCockpit.burnThreshold` | `50` | Monthly burn ($) above which the status light turns amber |
+| `buildCockpit.burnMax` | `200` | Max value for the burn gauge scale |
+| `buildCockpit.depsFileName` | `"deps.yaml"` | Dependencies file name |
+| `buildCockpit.tasksFileNames` | `["tasks.json", "tasks.yaml"]` | Task file names (priority order) |
 
 ## Calculations
 

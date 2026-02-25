@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import YAML from "yaml";
-import { Dependency, Task, DepsFile, TasksFile, DashboardData } from "./types";
+import { Dependency, Task, DepsFile, TasksFile, DashboardData, CockpitSettings } from "./types";
 
 export class DataProvider {
   private workspaceRoot: string | undefined;
@@ -10,11 +10,22 @@ export class DataProvider {
     this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
 
+  getSettings(): CockpitSettings {
+    const config = vscode.workspace.getConfiguration("buildCockpit");
+    return {
+      burnThreshold: config.get<number>("burnThreshold", 50),
+      burnMax: config.get<number>("burnMax", 200),
+      depsFileName: config.get<string>("depsFileName", "deps.yaml"),
+      tasksFileNames: config.get<string[]>("tasksFileNames", ["tasks.json", "tasks.yaml"]),
+    };
+  }
+
   async readDepsFile(): Promise<{ deps: Dependency[]; exists: boolean }> {
     if (!this.workspaceRoot) {
       return { deps: [], exists: false };
     }
-    const filePath = path.join(this.workspaceRoot, "deps.yaml");
+    const settings = this.getSettings();
+    const filePath = path.join(this.workspaceRoot, settings.depsFileName);
     try {
       const uri = vscode.Uri.file(filePath);
       const content = await vscode.workspace.fs.readFile(uri);
@@ -34,35 +45,48 @@ export class DataProvider {
     }
   }
 
-  async readTasksFile(): Promise<{ tasks: Task[]; exists: boolean }> {
+  async readTasksFile(): Promise<{ tasks: Task[]; exists: boolean; format: "json" | "yaml" }> {
     if (!this.workspaceRoot) {
-      return { tasks: [], exists: false };
+      return { tasks: [], exists: false, format: "json" };
     }
-    const filePath = path.join(this.workspaceRoot, "tasks.json");
-    try {
-      const uri = vscode.Uri.file(filePath);
-      const content = await vscode.workspace.fs.readFile(uri);
-      const text = Buffer.from(content).toString("utf-8");
-      const parsed = JSON.parse(text) as TasksFile;
-      const tasks = (parsed?.tasks ?? []).map((t) => ({
-        id: t.id ?? "unknown",
-        title: t.title ?? "Untitled",
-        weight: t.weight ?? 1,
-        status: t.status ?? "todo",
-        depends_on: t.depends_on ?? [],
-      }));
-      return { tasks, exists: true };
-    } catch {
-      return { tasks: [], exists: false };
+    const settings = this.getSettings();
+
+    // Try each tasks file name in order
+    for (const fileName of settings.tasksFileNames) {
+      const filePath = path.join(this.workspaceRoot, fileName);
+      try {
+        const uri = vscode.Uri.file(filePath);
+        const content = await vscode.workspace.fs.readFile(uri);
+        const text = Buffer.from(content).toString("utf-8");
+        const isYaml = fileName.endsWith(".yaml") || fileName.endsWith(".yml");
+        const parsed = isYaml
+          ? (YAML.parse(text) as TasksFile)
+          : (JSON.parse(text) as TasksFile);
+        const tasks = (parsed?.tasks ?? []).map((t) => ({
+          id: t.id ?? "unknown",
+          title: t.title ?? "Untitled",
+          weight: t.weight ?? 1,
+          status: t.status ?? "todo",
+          depends_on: t.depends_on ?? [],
+        }));
+        return { tasks, exists: true, format: isYaml ? "yaml" : "json" };
+      } catch {
+        // Try next file
+      }
     }
+    return { tasks: [], exists: false, format: "json" };
   }
 
+  private _tasksFormat: "json" | "yaml" = "json";
+
   async getDashboardData(): Promise<DashboardData> {
+    const settings = this.getSettings();
     const [depsResult, tasksResult] = await Promise.all([
       this.readDepsFile(),
       this.readTasksFile(),
     ]);
 
+    this._tasksFormat = tasksResult.format;
     const { deps } = depsResult;
     const { tasks } = tasksResult;
 
@@ -106,10 +130,28 @@ export class DataProvider {
     if (!this.workspaceRoot) {
       return;
     }
-    const filePath = path.join(this.workspaceRoot, "deps.yaml");
+    const settings = this.getSettings();
+    const filePath = path.join(this.workspaceRoot, settings.depsFileName);
     const uri = vscode.Uri.file(filePath);
     const content = YAML.stringify({ deps });
     await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
+  }
+
+  async writeTasksFile(tasks: Task[]): Promise<void> {
+    if (!this.workspaceRoot) {
+      return;
+    }
+    const settings = this.getSettings();
+    // Write to the first file name that exists, or the first in the list
+    const fileName = settings.tasksFileNames[0];
+    const filePath = path.join(this.workspaceRoot, fileName);
+    const uri = vscode.Uri.file(filePath);
+
+    if (this._tasksFormat === "yaml") {
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(YAML.stringify({ tasks }), "utf-8"));
+    } else {
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify({ tasks }, null, 2), "utf-8"));
+    }
   }
 
   async toggleDep(depName: string): Promise<void> {
@@ -121,6 +163,23 @@ export class DataProvider {
     if (dep) {
       dep.status = dep.status === "active" ? "paused" : "active";
       await this.writeDepsFile(deps);
+    }
+  }
+
+  async cycleTaskStatus(taskId: string): Promise<void> {
+    const { tasks, exists } = await this.readTasksFile();
+    if (!exists) {
+      return;
+    }
+    const task = tasks.find((t) => t.id === taskId);
+    if (task) {
+      const cycle: Record<string, "todo" | "doing" | "done"> = {
+        todo: "doing",
+        doing: "done",
+        done: "todo",
+      };
+      task.status = cycle[task.status] ?? "todo";
+      await this.writeTasksFile(tasks);
     }
   }
 
@@ -188,7 +247,8 @@ export class DataProvider {
         },
       ],
     };
-    const filePath = path.join(this.workspaceRoot, "deps.yaml");
+    const settings = this.getSettings();
+    const filePath = path.join(this.workspaceRoot, settings.depsFileName);
     const uri = vscode.Uri.file(filePath);
     await vscode.workspace.fs.writeFile(
       uri,
@@ -239,7 +299,8 @@ export class DataProvider {
         },
       ],
     };
-    const filePath = path.join(this.workspaceRoot, "tasks.json");
+    const settings = this.getSettings();
+    const filePath = path.join(this.workspaceRoot, settings.tasksFileNames[0]);
     const uri = vscode.Uri.file(filePath);
     await vscode.workspace.fs.writeFile(
       uri,

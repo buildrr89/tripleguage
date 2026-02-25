@@ -37,3 +37,10 @@ export interface DashboardData {
   hasDepsFile: boolean;
   hasTasksFile: boolean;
 }
+
+export interface CockpitSettings {
+  burnThreshold: number;
+  burnMax: number;
+  depsFileName: string;
+  tasksFileNames: string[];
+}

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { DataProvider } from "./dataProvider";
-import { DashboardData } from "./types";
+import { DashboardData, CockpitSettings } from "./types";
 
 export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
@@ -18,6 +18,10 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
       switch (msg.type) {
         case "toggleDep":
           await this.dataProvider.toggleDep(msg.name);
+          await this.refresh();
+          break;
+        case "cycleTask":
+          await this.dataProvider.cycleTaskStatus(msg.id);
           await this.refresh();
           break;
         case "pauseAll":
@@ -47,16 +51,25 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     const data = await this.dataProvider.getDashboardData();
-    this.view.webview.html = this.getHtml(data);
+    const settings = this.dataProvider.getSettings();
+
+    // Update badge on Activity Bar icon
+    this.view.badge = data.blockedTasks > 0
+      ? { tooltip: `${data.blockedTasks} blocked task${data.blockedTasks > 1 ? "s" : ""}`, value: data.blockedTasks }
+      : undefined;
+
+    this.view.webview.html = this.getHtml(data, settings);
   }
 
-  private getHtml(data: DashboardData): string {
+  private getHtml(data: DashboardData, settings: CockpitSettings): string {
     const nonce = getNonce();
 
-    // If neither file exists, show onboarding
     if (!data.hasDepsFile && !data.hasTasksFile) {
       return this.getOnboardingHtml(nonce);
     }
+
+    const burnRatio = Math.min(1, data.monthlyBurn / settings.burnMax);
+    const blockedRatio = data.totalTasks > 0 ? Math.min(1, data.blockedTasks / data.totalTasks) : 0;
 
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -66,23 +79,23 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <style nonce="${nonce}">
   :root {
-    --bg: #0d0d0f;
-    --surface: #161619;
-    --border: #2a2a2f;
-    --text: #e8e8ec;
-    --text-dim: #8888a0;
+    --bg: var(--vscode-sideBar-background, #0d0d0f);
+    --surface: var(--vscode-input-background, #161619);
+    --border: var(--vscode-widget-border, #2a2a2f);
+    --text: var(--vscode-foreground, #e8e8ec);
+    --text-dim: var(--vscode-descriptionForeground, #8888a0);
     --accent: #00d4aa;
     --accent-glow: rgba(0, 212, 170, 0.15);
     --warn: #ffaa00;
     --danger: #ff4466;
-    --gauge-track: #1e1e24;
+    --gauge-track: var(--vscode-input-background, #1e1e24);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    font-size: 12px;
+    font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
+    font-size: var(--vscode-font-size, 12px);
     overflow-x: hidden;
     padding: 8px;
   }
@@ -109,6 +122,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     border-radius: 50%;
     background: #444;
     box-shadow: 0 0 4px rgba(68,68,68,0.5);
+    transition: background 0.4s, box-shadow 0.4s;
   }
   .status-dot.green { background: #00cc88; box-shadow: 0 0 6px rgba(0,204,136,0.6); }
   .status-dot.amber { background: #ffaa00; box-shadow: 0 0 6px rgba(255,170,0,0.6); }
@@ -127,7 +141,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     width: 180px;
     height: 120px;
   }
-  .main-gauge svg { width: 100%; height: 100%; }
+  .main-gauge svg { width: 100%; height: 100%; overflow: visible; }
   .gauge-label {
     position: absolute;
     bottom: 4px;
@@ -141,6 +155,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     letter-spacing: -1px;
     color: var(--text);
     line-height: 1;
+    transition: color 0.4s;
   }
   .gauge-caption {
     font-size: 9px;
@@ -148,6 +163,14 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     text-transform: uppercase;
     letter-spacing: 1px;
     margin-top: 2px;
+  }
+
+  /* SVG arc animation */
+  .gauge-arc {
+    transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.4s;
+  }
+  .gauge-needle {
+    transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .sub-gauges {
@@ -161,7 +184,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     height: 72px;
     text-align: center;
   }
-  .sub-gauge svg { width: 100%; height: 100%; }
+  .sub-gauge svg { width: 100%; height: 100%; overflow: visible; }
   .sub-gauge-label {
     position: absolute;
     bottom: 2px;
@@ -174,6 +197,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     font-weight: 700;
     color: var(--text);
     line-height: 1;
+    transition: color 0.4s;
   }
   .sub-caption {
     font-size: 8px;
@@ -243,9 +267,9 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 6px 8px;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, background 0.15s;
   }
-  .dep-row:hover { border-color: #3a3a44; }
+  .dep-row:hover { border-color: color-mix(in srgb, var(--text-dim) 40%, transparent); }
   .dep-info { display: flex; flex-direction: column; gap: 1px; }
   .dep-name {
     font-size: 11px;
@@ -263,6 +287,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     border-radius: 50%;
     margin-right: 4px;
     vertical-align: middle;
+    transition: background 0.3s;
   }
   .dep-status.active { background: var(--accent); }
   .dep-status.paused { background: var(--warn); }
@@ -313,18 +338,28 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 11px;
+    transition: border-color 0.15s, background 0.15s;
   }
+  .task-row:hover { border-color: color-mix(in srgb, var(--text-dim) 40%, transparent); }
   .task-status-icon {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     border: 1.5px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    font-size: 8px;
+    font-size: 9px;
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
   }
+  .task-status-icon:hover {
+    transform: scale(1.15);
+    filter: brightness(1.2);
+  }
+  .task-status-icon:active { transform: scale(0.95); }
   .task-status-icon.done {
     background: var(--accent);
     border-color: var(--accent);
@@ -345,7 +380,8 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .task-title.blocked { color: var(--text-dim); text-decoration: line-through; }
+  .task-title.done-text { color: var(--text-dim); text-decoration: line-through; }
+  .task-title.blocked-text { color: var(--text-dim); text-decoration: line-through; }
   .task-weight {
     font-size: 9px;
     color: var(--text-dim);
@@ -358,6 +394,16 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     padding: 1px 4px;
     border-radius: 3px;
     flex-shrink: 0;
+  }
+  .task-status-tag {
+    font-size: 8px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .task-status-tag.doing-tag {
+    color: var(--accent);
+    background: rgba(0, 212, 170, 0.1);
   }
 
   /* ─── MISSING FILE BANNERS ─── */
@@ -374,6 +420,9 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     color: var(--warn);
     margin-bottom: 6px;
   }
+
+  /* ─── TOOLTIP ─── */
+  .task-row[title] { position: relative; }
 </style>
 </head>
 <body>
@@ -392,7 +441,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
       Health
     </div>
     <div class="status-light">
-      <span class="status-dot ${data.monthlyBurn > 50 ? "amber" : "green"}"></span>
+      <span class="status-dot ${data.monthlyBurn > settings.burnThreshold ? "amber" : "green"}"></span>
       Burn
     </div>
   </div>
@@ -404,18 +453,15 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     <!-- MAIN PROGRESS GAUGE -->
     <div class="main-gauge">
       <svg viewBox="0 0 200 130">
-        <!-- Tick marks -->
-        ${this.generateTicks(100, 105, 40, 200, 130)}
+        ${this.generateTicks(100, 105, 40, false)}
         <!-- Track -->
-        <path d="${describeArc(100, 105, 72, 220, 320)}" fill="none" stroke="#1e1e24" stroke-width="12" stroke-linecap="round"/>
-        <!-- Value arc -->
-        <path d="${describeArc(100, 105, 72, 220, 220 + (data.progress / 100) * 100)}"
-          fill="none" stroke="${this.progressColor(data.progress)}" stroke-width="12" stroke-linecap="round"
-          style="filter: drop-shadow(0 0 6px ${this.progressColor(data.progress)}44);"/>
+        <path d="${describeArc(100, 105, 72, 220, 320)}" fill="none" stroke="var(--gauge-track)" stroke-width="12" stroke-linecap="round"/>
+        <!-- Value arc (animated via dashoffset) -->
+        ${this.generateAnimatedArc(100, 105, 72, 220, 320, data.progress / 100, this.progressColor(data.progress), 12)}
         <!-- Needle -->
-        ${this.generateNeedle(100, 105, 58, 220 + (data.progress / 100) * 100)}
+        ${this.generateNeedle(100, 105, 58, 220, 220 + (data.progress / 100) * 100)}
         <!-- Center cap -->
-        <circle cx="100" cy="105" r="5" fill="#2a2a2f"/>
+        <circle cx="100" cy="105" r="5" fill="var(--gauge-track)"/>
         <circle cx="100" cy="105" r="2.5" fill="${this.progressColor(data.progress)}"/>
       </svg>
       <div class="gauge-label">
@@ -429,13 +475,10 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
       <!-- BURN GAUGE -->
       <div class="sub-gauge">
         <svg viewBox="0 0 120 80">
-          ${this.generateTicks(60, 65, 25, 120, 80, true)}
-          <path d="${describeArc(60, 65, 40, 220, 320)}" fill="none" stroke="#1e1e24" stroke-width="8" stroke-linecap="round"/>
-          <path d="${describeArc(60, 65, 40, 220, 220 + Math.min(1, data.monthlyBurn / 200) * 100)}"
-            fill="none" stroke="${data.monthlyBurn > 100 ? "#ff4466" : data.monthlyBurn > 50 ? "#ffaa00" : "#00d4aa"}"
-            stroke-width="8" stroke-linecap="round"
-            style="filter: drop-shadow(0 0 4px ${data.monthlyBurn > 100 ? "#ff446644" : data.monthlyBurn > 50 ? "#ffaa0044" : "#00d4aa44"});"/>
-          <circle cx="60" cy="65" r="3" fill="#2a2a2f"/>
+          ${this.generateTicks(60, 65, 25, true)}
+          <path d="${describeArc(60, 65, 40, 220, 320)}" fill="none" stroke="var(--gauge-track)" stroke-width="8" stroke-linecap="round"/>
+          ${this.generateAnimatedArc(60, 65, 40, 220, 320, burnRatio, this.burnColor(data.monthlyBurn, settings.burnThreshold), 8)}
+          <circle cx="60" cy="65" r="3" fill="var(--gauge-track)"/>
         </svg>
         <div class="sub-gauge-label">
           <div class="sub-value">$${data.monthlyBurn}</div>
@@ -446,13 +489,10 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
       <!-- BLOCKED GAUGE -->
       <div class="sub-gauge">
         <svg viewBox="0 0 120 80">
-          ${this.generateTicks(60, 65, 25, 120, 80, true)}
-          <path d="${describeArc(60, 65, 40, 220, 320)}" fill="none" stroke="#1e1e24" stroke-width="8" stroke-linecap="round"/>
-          <path d="${describeArc(60, 65, 40, 220, 220 + (data.totalTasks > 0 ? Math.min(1, data.blockedTasks / data.totalTasks) : 0) * 100)}"
-            fill="none" stroke="${data.blockedTasks > 0 ? "#ff4466" : "#00d4aa"}"
-            stroke-width="8" stroke-linecap="round"
-            style="filter: drop-shadow(0 0 4px ${data.blockedTasks > 0 ? "#ff446644" : "#00d4aa44"});"/>
-          <circle cx="60" cy="65" r="3" fill="#2a2a2f"/>
+          ${this.generateTicks(60, 65, 25, true)}
+          <path d="${describeArc(60, 65, 40, 220, 320)}" fill="none" stroke="var(--gauge-track)" stroke-width="8" stroke-linecap="round"/>
+          ${this.generateAnimatedArc(60, 65, 40, 220, 320, blockedRatio, data.blockedTasks > 0 ? "#ff4466" : "#00d4aa", 8)}
+          <circle cx="60" cy="65" r="3" fill="var(--gauge-track)"/>
         </svg>
         <div class="sub-gauge-label">
           <div class="sub-value">${data.blockedTasks}</div>
@@ -474,7 +514,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
   </div>` : ""}
   ${!data.hasTasksFile ? `
   <div class="missing-banner">
-    <p>No tasks.json found</p>
+    <p>No tasks file found</p>
     <button class="btn btn-sm" onclick="send('createSampleTasks')">Create Sample</button>
   </div>` : ""}
 
@@ -493,11 +533,11 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
         (d) => `
     <div class="dep-row">
       <div class="dep-info">
-        <span class="dep-name"><span class="dep-status ${d.status}"></span>${d.name}</span>
+        <span class="dep-name"><span class="dep-status ${d.status}"></span>${escapeHtml(d.name)}</span>
         <span class="dep-meta">${d.billing}${d.cost_monthly ? ` \u00b7 $${d.cost_monthly}/mo` : ""}${d.safe_to_pause ? " \u00b7 safe" : ""}</span>
       </div>
       <button class="btn btn-sm ${d.status === "active" ? "active-toggle" : "pause-toggle"}"
-        onclick="send('toggleDep', '${d.name}')">${d.status === "active" ? "Pause" : "Activate"}</button>
+        onclick="send('toggleDep', '${escapeHtml(d.name)}')">${d.status === "active" ? "Pause" : "Activate"}</button>
     </div>`
       )
       .join("")}
@@ -536,11 +576,20 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
             : isBlocked
             ? "blocked"
             : "";
+        const titleClass =
+          t.status === "done"
+            ? "done-text"
+            : isBlocked
+            ? "blocked-text"
+            : "";
+        const nextStatus =
+          t.status === "todo" ? "doing" : t.status === "doing" ? "done" : "todo";
         return `
-    <div class="task-row">
-      <span class="task-status-icon ${iconClass}">${icon}</span>
-      <span class="task-title ${isBlocked ? "blocked" : ""}">${t.title}</span>
+    <div class="task-row" title="Click circle to mark as ${nextStatus}">
+      <span class="task-status-icon ${iconClass}" onclick="send('cycleTask', '${escapeHtml(t.id)}')">${icon}</span>
+      <span class="task-title ${titleClass}">${escapeHtml(t.title)}</span>
       ${isBlocked ? `<span class="task-blocked-tag">blocked</span>` : ""}
+      ${t.status === "doing" && !isBlocked ? `<span class="task-status-tag doing-tag">doing</span>` : ""}
       <span class="task-weight">${t.weight}pt</span>
     </div>`;
       })
@@ -549,8 +598,14 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    function send(type, name) {
-      vscode.postMessage({ type, name });
+    function send(type, value) {
+      if (type === 'cycleTask') {
+        vscode.postMessage({ type, id: value });
+      } else if (type === 'toggleDep') {
+        vscode.postMessage({ type, name: value });
+      } else {
+        vscode.postMessage({ type });
+      }
     }
   </script>
 </body>
@@ -566,11 +621,11 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <style nonce="${nonce}">
   :root {
-    --bg: #0d0d0f;
-    --surface: #161619;
-    --border: #2a2a2f;
-    --text: #e8e8ec;
-    --text-dim: #8888a0;
+    --bg: var(--vscode-sideBar-background, #0d0d0f);
+    --surface: var(--vscode-input-background, #161619);
+    --border: var(--vscode-widget-border, #2a2a2f);
+    --text: var(--vscode-foreground, #e8e8ec);
+    --text-dim: var(--vscode-descriptionForeground, #8888a0);
     --accent: #00d4aa;
     --accent-glow: rgba(0, 212, 170, 0.15);
   }
@@ -578,8 +633,8 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    font-size: 12px;
+    font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
+    font-size: var(--vscode-font-size, 12px);
     padding: 20px 12px;
     display: flex;
     flex-direction: column;
@@ -658,13 +713,44 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     return "#ff4466";
   }
 
+  private burnColor(burn: number, threshold: number): string {
+    if (burn > threshold * 2) return "#ff4466";
+    if (burn > threshold) return "#ffaa00";
+    return "#00d4aa";
+  }
+
+  private generateAnimatedArc(
+    cx: number,
+    cy: number,
+    r: number,
+    startAngle: number,
+    endAngle: number,
+    ratio: number,
+    color: string,
+    strokeWidth: number
+  ): string {
+    // Calculate total arc length for dash animation
+    const totalAngle = endAngle - startAngle;
+    const arcLength = (totalAngle * Math.PI * r) / 180;
+    const filledLength = arcLength * ratio;
+    const emptyLength = arcLength - filledLength;
+
+    if (ratio <= 0) {
+      return "";
+    }
+
+    return `<path class="gauge-arc"
+      d="${describeArc(cx, cy, r, startAngle, endAngle)}"
+      fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round"
+      stroke-dasharray="${filledLength} ${emptyLength}"
+      style="filter: drop-shadow(0 0 6px ${color}44);"/>`;
+  }
+
   private generateTicks(
     cx: number,
     cy: number,
     count: number,
-    _viewW: number,
-    _viewH: number,
-    small = false
+    small: boolean
   ): string {
     const startAngle = 220;
     const endAngle = 320;
@@ -680,7 +766,7 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
       const y2 = cy + radius * Math.sin(rad);
       const isMajor = i % (small ? 5 : 10) === 0;
       ticks.push(
-        `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#2a2a2f" stroke-width="${
+        `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--border)" stroke-width="${
           isMajor ? 1.5 : 0.5
         }" opacity="${isMajor ? 0.8 : 0.4}"/>`
       );
@@ -692,15 +778,16 @@ export class BuildCockpitViewProvider implements vscode.WebviewViewProvider {
     cx: number,
     cy: number,
     length: number,
-    angleDeg: number
+    baseAngle: number,
+    targetAngle: number
   ): string {
-    const rad = (angleDeg * Math.PI) / 180;
+    const rad = (targetAngle * Math.PI) / 180;
     const tipX = cx + length * Math.cos(rad);
     const tipY = cy + length * Math.sin(rad);
     const tailLen = 12;
     const tailX = cx - tailLen * Math.cos(rad);
     const tailY = cy - tailLen * Math.sin(rad);
-    return `<line x1="${tailX}" y1="${tailY}" x2="${tipX}" y2="${tipY}" stroke="#e8e8ec" stroke-width="2" stroke-linecap="round" style="filter: drop-shadow(0 0 3px rgba(232,232,236,0.4));"/>`;
+    return `<line class="gauge-needle" x1="${tailX}" y1="${tailY}" x2="${tipX}" y2="${tipY}" stroke="var(--text)" stroke-width="2" stroke-linecap="round" style="filter: drop-shadow(0 0 3px rgba(232,232,236,0.4)); transform-origin: ${cx}px ${cy}px;"/>`;
   }
 }
 
@@ -725,6 +812,15 @@ function polarToCartesian(
 ): { x: number; y: number } {
   const rad = (angleDeg * Math.PI) / 180;
   return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function getNonce(): string {

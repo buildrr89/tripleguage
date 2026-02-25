@@ -16,17 +16,26 @@ export function activate(context: vscode.ExtensionContext) {
 
   // File watchers for auto-refresh
   const depsWatcher = vscode.workspace.createFileSystemWatcher("**/deps.yaml");
-  const tasksWatcher = vscode.workspace.createFileSystemWatcher("**/tasks.json");
+  const tasksJsonWatcher = vscode.workspace.createFileSystemWatcher("**/tasks.json");
+  const tasksYamlWatcher = vscode.workspace.createFileSystemWatcher("**/tasks.yaml");
 
   const refresh = () => viewProvider.refresh();
-  depsWatcher.onDidChange(refresh);
-  depsWatcher.onDidCreate(refresh);
-  depsWatcher.onDidDelete(refresh);
-  tasksWatcher.onDidChange(refresh);
-  tasksWatcher.onDidCreate(refresh);
-  tasksWatcher.onDidDelete(refresh);
 
-  context.subscriptions.push(depsWatcher, tasksWatcher);
+  for (const watcher of [depsWatcher, tasksJsonWatcher, tasksYamlWatcher]) {
+    watcher.onDidChange(refresh);
+    watcher.onDidCreate(refresh);
+    watcher.onDidDelete(refresh);
+    context.subscriptions.push(watcher);
+  }
+
+  // Refresh when settings change
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("buildCockpit")) {
+        refresh();
+      }
+    })
+  );
 
   // Commands
   context.subscriptions.push(
