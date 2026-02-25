@@ -2,7 +2,13 @@
 .vscode-test/**
 src/**
 .gitignore
+.github/**
 tsconfig.json
+**/*.ts
 **/*.map
+**/*.d.ts
 node_modules/**
 !node_modules/yaml/**
+node_modules/yaml/browser/**
+node_modules/yaml/bin.mjs
+node_modules/yaml/README.md
