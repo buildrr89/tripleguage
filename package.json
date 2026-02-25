@@ -1,0 +1,78 @@
+{
+  "name": "build-cockpit",
+  "displayName": "Build Cockpit",
+  "description": "A sports car gauge-cluster dashboard for your project — track progress, dependency burn, and blocked tasks at a glance.",
+  "version": "0.1.0",
+  "publisher": "restolad",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "dashboard",
+    "gauge",
+    "cockpit",
+    "progress",
+    "dependencies"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "build-cockpit",
+          "title": "Build Cockpit",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "build-cockpit": [
+        {
+          "type": "webview",
+          "id": "buildCockpit.dashboard",
+          "name": "Dashboard"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "buildCockpit.refresh",
+        "title": "Build Cockpit: Refresh Dashboard"
+      },
+      {
+        "command": "buildCockpit.pauseAll",
+        "title": "Build Cockpit: Pause All Safe Dependencies"
+      },
+      {
+        "command": "buildCockpit.createSampleDeps",
+        "title": "Build Cockpit: Create Sample deps.yaml"
+      },
+      {
+        "command": "buildCockpit.createSampleTasks",
+        "title": "Build Cockpit: Create Sample tasks.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "yaml": "^2.3.4"
+  }
+}
